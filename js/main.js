@@ -1,5 +1,5 @@
-/* Caldwell Concrete & Construction — client behavior
-   Trivial state only: activeGalleryCategory, lightboxItem, formSent, mobile-menu open. */
+/* Caldwell Concrete & Construction — "Monolith" client behavior
+   State: formSent, film-strip scroll (DOM), reveal-on-scroll, mobile menu. */
 (function () {
   'use strict';
 
@@ -8,9 +8,30 @@
      Create a free form at https://formspree.io, then set:
      FORM_ENDPOINT = 'https://formspree.io/f/YOUR_FORM_ID'
      While empty, the form runs in demo mode (validates + shows
-     the REQUEST SENT confirmation without sending anything).
+     the confirmation without sending anything).
      ============================================================ */
   var FORM_ENDPOINT = '';
+
+  var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* Gate reveal styles on JS availability (no-JS users see everything) */
+  document.documentElement.classList.add('js');
+
+  /* ---------- Scroll reveals ---------- */
+  var revealEls = Array.prototype.slice.call(document.querySelectorAll('[data-reveal]'));
+  if (reducedMotion || !('IntersectionObserver' in window)) {
+    revealEls.forEach(function (el) { el.classList.add('on'); });
+  } else {
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('on');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.15 });
+    revealEls.forEach(function (el) { observer.observe(el); });
+  }
 
   /* ---------- Mobile menu ---------- */
   var toggle = document.querySelector('.nav-toggle');
@@ -32,112 +53,59 @@
     el.addEventListener('click', closeMenu);
   });
 
-  /* ---------- Gallery filter ---------- */
-  var tags = Array.prototype.slice.call(document.querySelectorAll('.filters .tag'));
-  var shots = Array.prototype.slice.call(document.querySelectorAll('.shots .shot'));
-
-  tags.forEach(function (tag) {
-    tag.addEventListener('click', function () {
-      tags.forEach(function (t) {
-        var active = t === tag;
-        t.classList.toggle('is-active', active);
-        t.setAttribute('aria-pressed', String(active));
-      });
-      var cat = tag.getAttribute('data-cat');
-      shots.forEach(function (s) {
-        s.hidden = cat !== 'all' && s.getAttribute('data-cat') !== cat;
-      });
-    });
-  });
-
-  /* ---------- Lightbox ---------- */
-  var lightbox = document.getElementById('lightbox');
-  var lbImg = lightbox.querySelector('.lightbox__img');
-  var lbLabel = document.getElementById('lightbox-label');
-  var lastFocus = null;
-
-  function openLightbox(src, label) {
-    lbImg.src = src;
-    lbImg.alt = label;
-    lbLabel.textContent = label;
-    lightbox.hidden = false;
-    lightbox.focus();
-  }
-
-  function closeLightbox() {
-    lightbox.hidden = true;
-    lbImg.src = '';
-    if (lastFocus) lastFocus.focus();
-  }
-
-  shots.forEach(function (shot) {
-    shot.addEventListener('click', function () {
-      lastFocus = shot;
-      var img = shot.querySelector('img');
-      openLightbox(img.src, shot.getAttribute('data-label'));
-    });
-  });
-
-  lightbox.addEventListener('click', closeLightbox);
-
-  /* ---------- Request-sent modal ---------- */
-  var modal = document.getElementById('sent-modal');
-  var modalCard = modal.querySelector('.modal__card');
-  var doneBtn = document.getElementById('sent-done');
-
-  function openModal() {
-    modal.hidden = false;
-    doneBtn.focus();
-  }
-  function closeModal() {
-    modal.hidden = true;
-  }
-
-  modal.addEventListener('click', closeModal);
-  modalCard.addEventListener('click', function (e) { e.stopPropagation(); });
-  doneBtn.addEventListener('click', closeModal);
-
-  /* Escape closes any open overlay */
   document.addEventListener('keydown', function (e) {
-    if (e.key !== 'Escape') return;
-    if (!lightbox.hidden) closeLightbox();
-    if (!modal.hidden) closeModal();
-    if (menu.classList.contains('is-open')) closeMenu();
+    if (e.key === 'Escape' && menu.classList.contains('is-open')) closeMenu();
   });
+
+  /* ---------- Film strip ---------- */
+  var strip = document.getElementById('filmstrip');
+  var CARD = 440 + 4; /* card width + gap */
+
+  function scrollStrip(dir) {
+    strip.scrollBy({ left: dir * CARD * 2, behavior: reducedMotion ? 'auto' : 'smooth' });
+  }
+
+  document.getElementById('strip-prev').addEventListener('click', function () { scrollStrip(-1); });
+  document.getElementById('strip-next').addEventListener('click', function () { scrollStrip(1); });
 
   /* ---------- Estimate form ---------- */
   var form = document.getElementById('estimate-form');
+  var fields = document.getElementById('form-fields');
+  var success = document.getElementById('form-success');
   var errorEl = document.getElementById('form-error');
   var submitBtn = document.getElementById('form-submit');
 
-  function fieldValue(name) {
-    return form.elements[name] ? form.elements[name].value.trim() : '';
-  }
+  var required = ['name', 'phone', 'details'];
 
-  /* Clear invalid state as the user types */
-  ['name', 'phone'].forEach(function (name) {
+  required.forEach(function (name) {
     form.elements[name].addEventListener('input', function () {
       this.classList.remove('is-invalid');
     });
   });
+
+  function showSuccess() {
+    fields.hidden = true;
+    success.hidden = false;
+    success.focus();
+  }
 
   form.addEventListener('submit', function (e) {
     e.preventDefault();
     errorEl.hidden = true;
 
     /* Honeypot — bots fill it, humans never see it */
-    if (fieldValue('_gotcha')) return;
+    if (form.elements['_gotcha'].value) return;
 
-    /* Validation: name + phone required */
+    /* Validation: name, phone, details required */
     var invalid = false;
-    ['name', 'phone'].forEach(function (name) {
+    required.forEach(function (name) {
       var el = form.elements[name];
       var ok = el.value.trim().length > 0;
       el.classList.toggle('is-invalid', !ok);
       if (!ok) invalid = true;
     });
     if (invalid) {
-      errorEl.textContent = 'Name and phone are required.';
+      errorEl.textContent = 'Name, phone, and job details are required.';
       errorEl.hidden = false;
       form.querySelector('.is-invalid').focus();
       return;
@@ -145,8 +113,7 @@
 
     /* Demo mode until FORM_ENDPOINT is configured */
     if (!FORM_ENDPOINT) {
-      openModal();
-      form.reset();
+      showSuccess();
       return;
     }
 
@@ -158,8 +125,7 @@
     })
       .then(function (res) {
         if (!res.ok) throw new Error('send failed');
-        openModal();
-        form.reset();
+        showSuccess();
       })
       .catch(function () {
         errorEl.textContent = 'Something went wrong. Call or text (636) 200-7548 instead.';
